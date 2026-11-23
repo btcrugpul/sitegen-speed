@@ -323,9 +323,30 @@ function tplTruthy(v) {
   return v !== undefined && v !== null && v !== false && v !== '' && v !== 0;
 }
 
+/** A one-segment path's value: the innermost frame holding the name. Most template paths are this shape. */
+function tplLookup1(S, name) {
+  for (let i = S.length - 1; i >= 0; i--) {
+    if (Object.hasOwn(S[i], name)) return S[i][name];
+  }
+  return undefined;
+}
+
+/** A two-segment path's value, without building the path array. */
+function tplLookup2(S, a, b) {
+  for (let i = S.length - 1; i >= 0; i--) {
+    if (Object.hasOwn(S[i], a)) {
+      const v = S[i][a];
+      return v !== null && typeof v === 'object' && Object.hasOwn(v, b) ? v[b] : undefined;
+    }
+  }
+  return undefined;
+}
+
 /** The render helpers every compiled template closes over through its H argument. */
 const TPL_H = {
   L: tplLookup,
+  L1: tplLookup1,
+  L2: tplLookup2,
   T: tplText,
   Y: tplTruthy,
   E: escapeHtml,
@@ -337,6 +358,13 @@ const TPL_H = {
   },
 };
 
+/** The lookup expression for a path: specialised for one and two segments, the shapes templates use. */
+function tplLookupExpr(path) {
+  if (path.length === 1) return `H.L1(S,${JSON.stringify(path[0])})`;
+  if (path.length === 2) return `H.L2(S,${JSON.stringify(path[0])},${JSON.stringify(path[1])})`;
+  return `H.L(S,${JSON.stringify(path)})`;
+}
+
 /** Generate the body of a compiled template from its node tree. */
 function tplGen(nodes, out) {
   for (const n of nodes) {
@@ -345,13 +373,13 @@ function tplGen(nodes, out) {
         out.push(`o+=${JSON.stringify(n.text)};`);
         break;
       case 'var':
-        out.push(`o+=H.E(H.T(H.L(S,${JSON.stringify(n.path)})));`);
+        out.push(`o+=H.E(H.T(${tplLookupExpr(n.path)}));`);
         break;
       case 'raw':
-        out.push(`o+=H.T(H.L(S,${JSON.stringify(n.path)}));`);
+        out.push(`o+=H.T(${tplLookupExpr(n.path)});`);
         break;
       case 'if':
-        out.push(`if(H.Y(H.L(S,${JSON.stringify(n.path)}))!==${n.not}){`);
+        out.push(`if(H.Y(${tplLookupExpr(n.path)})!==${n.not}){`);
         tplGen(n.then, out);
         if (n.else !== null) {
           out.push('}else{');
@@ -360,7 +388,7 @@ function tplGen(nodes, out) {
         out.push('}');
         break;
       case 'for':
-        out.push(`{const xs=H.L(S,${JSON.stringify(n.path)});if(Array.isArray(xs)){const n=xs.length;for(let k=0;k<n;k++){S.push({[${JSON.stringify(n.name)}]:xs[k],loop:{index:k+1,first:k===0,last:k===n-1,length:n}});`);
+        out.push(`{const xs=${tplLookupExpr(n.path)};if(Array.isArray(xs)){const n=xs.length;for(let k=0;k<n;k++){S.push({[${JSON.stringify(n.name)}]:xs[k],loop:{index:k+1,first:k===0,last:k===n-1,length:n}});`);
         tplGen(n.body, out);
         out.push('S.pop();}}}');
         break;
